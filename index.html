@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sottra</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+
+<body class="bg-white text-gray-800">
+    <!-- ニックネーム入力画面 -->
+    <div id="screen-splash" class="max-w-md mx-auto p-4 h-screen flex flex-col justify-center">
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-bold">Sottra</h1>
+            <p class="mt-2 text-sm text-gray-600">近くにいる日本人旅行者と相談できるチャットアプリ</p>
+        </div>
+        <div class="space-y-3">
+            <label for="nicknameInput" class="sr-only">ニックネーム</label>
+            <input id="nicknameInput" type="text" class="w-full border rounded px-3 py-3 text-base" placeholder="ニックネームを入力（必須）" aria-required="true" />
+            <div class="grid grid-cols-2 gap-2 justify-items-center">
+                <button id="loginBtn" type="button" class="bg-indigo-600 text-white rounded py-2 text-base min-w-0 w-40">ログイン</button>
+                <button id="registerBtn" type="button" class="bg-gray-200 text-gray-900 rounded py-2 text-base min-w-0 w-40">新規ユーザーで開始</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ホーム画面（マップ＋近くの人リスト） -->
+    <div id="screen-home" class="hidden max-w-md mx-auto h-screen flex flex-col">
+        <header class="flex items-center justify-between h-12 px-4 border-b bg-white">
+            <div class="font-semibold">Sottra</div>
+            <div class="flex items-center gap-2">
+                <div id="myNickname" class="text-sm text-gray-600" aria-live="polite"></div>
+                <button id="logoutBtn" type="button" class="text-sm text-indigo-600 min-w-0 w-24">ログアウト</button>
+            </div>
+        </header>
+        
+        <main class="flex-1 overflow-hidden">
+            <div id="map" class="h-[65vh] w-full"></div>
+            <section class="h-[35vh] overflow-y-auto border-t">
+                <div class="px-4 py-2 text-sm text-gray-500">近くの旅人</div>
+                <ul id="userList" class="divide-y"></ul>
+            </section>
+        </main>
+    </div>
+
+    <!-- チャット画面（1対1） -->
+    <div id="screen-chat" class="hidden max-w-md mx-auto h-screen flex flex-col">
+        <header class="flex items-center h-12 px-4 border-b bg-white">
+            <button id="backBtn" type="button" class="mr-3 text-indigo-600" aria-label="戻る">＜ 戻る</button>
+            <div id="chatPartnerName" class="font-semibold"></div>
+            <div id="chatDistance" class="ml-auto text-xs text-gray-500"></div>
+        </header>
+        <main class="flex-1 overflow-y-auto bg-gray-50" id="messages"></main>
+        <footer class="p-3 border-t bg-white flex items-center gap-1">
+            <label for="chatText" class="sr-only">メッセージ入力</label>
+            <textarea id="chatText" class="flex-1 border rounded px-3 py-2 h-20 resize-none" placeholder="メッセージ" aria-label="メッセージ"></textarea>
+            <button id="sendMessage" type="button" class="shrink-0 bg-indigo-600 text-white rounded px-1 py-0.5 text-xs leading-none min-w-0 h-7 w-12 text-center">送信</button>
+        </footer>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module" src="js/main.js"></script>
+</body>
+
+</html>
