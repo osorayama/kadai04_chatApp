@@ -37,8 +37,14 @@
             </div>
         </header>
         
-        <main class="flex-1 overflow-hidden">
+        <main class="relative flex-1 overflow-hidden">
             <div id="map" class="h-[65vh] w-full"></div>
+            <!-- Helpボタン（500m以内の旅人へ通知） -->
+            <button id="helpBtn" type="button" class="fixed right-4 bottom-4 z-[10000] pointer-events-auto bg-red-600 text-white rounded-full shadow-lg px-4 py-2 text-sm">
+                Help（近くに知らせる）
+            </button>
+            <!-- 近くのHelp要請トースト表示領域 -->
+            <div id="helpToastContainer" class="absolute left-0 right-0 bottom-[35vh] z-[11000] pointer-events-none px-4"></div>
             <section class="h-[35vh] overflow-y-auto border-t">
                 <div class="px-4 py-2 text-sm text-gray-500">近くの旅人</div>
                 <ul id="userList" class="divide-y"></ul>

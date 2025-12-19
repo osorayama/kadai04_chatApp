@@ -1,6 +1,3 @@
-// Sottra MVP main.js (RTDB版)
-// Firebase Auth (匿名) + Realtime Database, Leafletで近くのユーザー表示＆1対1チャット
-
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.1.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.1.0/firebase-auth.js";
 import {
@@ -15,11 +12,12 @@ import {
 	remove
 } from "https://www.gstatic.com/firebasejs/9.1.0/firebase-database.js";
 
-// Firebase設定（既存プロジェクトを利用）
+// Firebase設定
 const firebaseConfig = {
 	
 };
 
+// Firebase初期化
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const rtdb = getDatabase(app);
@@ -40,25 +38,199 @@ const $chatDistanceEl = $('#chatDistance');
 const $messagesEl = $('#messages');
 const $chatTextInput = $('#chatText');
 const $sendMessageBtn = $('#sendMessage');
+const $helpBtn = $('#helpBtn');
+const $helpToastContainer = $('#helpToastContainer');
 
-// 状態
-let currentUser = null; // { uid, nickname }
-let pendingNickname = null; // スプラッシュで入力されたニックネームを保持
-let loginMode = false; // ログイン（既存ニックネーム必須）
-let registerMode = false; // 新規登録（未使用ニックネーム必須）
-let myLocation = null; // { lat, lng }
-let map = null;
-let myMarker = null;
-let otherMarkers = {}; // uid -> marker
-let nearbyUsers = []; // { uid, nickname, lat, lng, distanceKm }
-let activeRoom = null; // { roomId, partner }
-let unsubMessages = null;
-let incomingListeners = {}; // roomId -> unsubscribe-like flag
-let unreadCounts = {}; // roomId -> number
-let locationsCleaned = false; // 全体重複クリーンアップ一度だけ実施
-let locationsSubscribed = false; // 二重購読防止
+// 状態（アプリ全体で共有）
+let currentUser = null;          // { uid, nickname }
+let pendingNickname = null;      // 入力中のニックネーム一時保持
+let loginMode = false;           // 既存ユーザーとして開始
+let registerMode = false;        // 新規ユーザーとして開始
+let myLocation = null;           // { lat, lng }
+let map = null;                  // Leafletマップ
+let myMarker = null;             // 自分のマーカー
+let otherMarkers = {};           // uid -> 他ユーザーマーカー
+let nearbyUsers = [];            // 近くのユーザー配列（距離含む）
+let activeRoom = null;           // { roomId, partner }
+let unsubMessages = null;        // 将来の解除用に保持（未使用）
+let incomingListeners = {};      // roomId -> リスナー設置済みフラグ
+let unreadCounts = {};           // roomId -> 未読数
+let locationsCleaned = false;    // locations重複クリーン実施済み
+let locationsSubscribed = false; // locations購読の重複防止
+// Help機能の責務を集約
+const HelpManager = (() => {
+	let activeId = null; // 自分が発した未解決Helpのpushキー
+	let circle = null;   // 500m円
 
-// 画面切り替え
+	function setButtonState() {
+		if (!$helpBtn || !$helpBtn.length) return;
+		if (activeId) {
+			$helpBtn.text('Helpをキャンセル');
+			$helpBtn.removeClass('bg-red-600').addClass('bg-gray-600');
+		} else {
+			$helpBtn.text('Help（近くに知らせる）');
+			$helpBtn.removeClass('bg-gray-600').addClass('bg-red-600');
+		}
+	}
+
+	async function request() {
+		if (!currentUser) { alert('ログインしてください'); return; }
+		if (!myLocation) { alert('位置情報が未取得です'); return; }
+		const ok = await Ui.confirm('近くの旅人（500m以内）にHelpを知らせます。よろしいですか？');
+		if (!ok) return;
+		const reqRef = push(ref(rtdb, 'helpRequests'));
+		await set(reqRef, {
+			id: reqRef.key,
+			requesterId: currentUser.uid,
+			requesterNickname: currentUser.nickname || '不明',
+			lat: myLocation.lat,
+			lng: myLocation.lng,
+			radiusM: 500,
+			status: 'open',
+			createdAt: Date.now()
+		});
+		activeId = reqRef.key;
+		try {
+			if (circle) { map && map.removeLayer(circle); }
+			circle = L.circle([myLocation.lat, myLocation.lng], { radius: 500, color: '#ef4444', fillColor: '#fca5a5', fillOpacity: 0.2 }).addTo(map);
+		} catch (_) {}
+		showToast({ message: 'Helpを近くの旅人に通知しました（500m）', type: 'success' });
+		setButtonState();
+	}
+
+	async function cancel() {
+		if (!activeId) return;
+		try {
+			await update(ref(rtdb, `helpRequests/${activeId}`), { status: 'cancelled', cancelledAt: Date.now() });
+		} catch (_) {}
+		activeId = null;
+		if (circle) { try { map && map.removeLayer(circle); } catch(_){} circle = null; }
+		showToast({ message: 'Helpをキャンセルしました', type: 'info' });
+		setButtonState();
+	}
+
+	async function toggle() {
+		if (activeId) return cancel();
+		return request();
+	}
+
+	// 30分超の古い要請を削除
+	async function cleanupOld(val) {
+		const now = Date.now();
+		const oldKeys = Object.keys(val).filter(k => (val[k] && (now - (val[k].createdAt || 0) > 30 * 60 * 1000)));
+		await Promise.all(oldKeys.map(k => remove(ref(rtdb, `helpRequests/${k}`)).catch(() => {})));
+	}
+
+	function showToast({ message, type = 'info' }) {
+		const color = type === 'success' ? 'bg-green-600' : type === 'error' ? 'bg-red-600' : 'bg-gray-800';
+		const $el = $(`
+			<div class="${color} text-white text-sm px-3 py-2 rounded shadow mb-2">${message}</div>
+		`);
+		$helpToastContainer.append($el);
+		setTimeout(() => { $el.fadeOut(300, () => $el.remove()); }, 2500);
+	}
+
+	function showIncomingToast({ id, nickname, distanceLabel, requesterId, distanceKm }) {
+		$helpToastContainer.empty();
+		const $el = $(`
+			<div class="bg-white border rounded shadow p-3 flex items-center gap-3 pointer-events-auto">
+				<div class="w-8 h-8 rounded-full bg-red-500"></div>
+				<div class="flex-1">
+					<div class="text-sm font-medium">近くでHelp要請</div>
+					<div class="text-xs text-gray-600">${nickname}・約${distanceLabel}</div>
+				</div>
+				<button class="px-3 py-1 bg-indigo-600 text-white rounded text-sm" data-act="assist">助ける</button>
+				<button class="px-2 py-1 text-sm text-gray-600" data-act="close">閉じる</button>
+			</div>
+		`);
+		$el.on('click', '[data-act="assist"]', async () => {
+			try { update(ref(rtdb, `helpRequests/${id}`), { status: 'accepted', acceptedBy: currentUser.uid, acceptedAt: Date.now() }).catch(() => {}); } catch (_) {}
+			startChatWithUser({ uid: requesterId, nickname, distanceKm });
+			$helpToastContainer.empty();
+		});
+		$el.on('click', '[data-act="close"]', () => { $helpToastContainer.empty(); });
+		$helpToastContainer.append($el);
+	}
+
+	function subscribe() {
+		const reqRef = ref(rtdb, 'helpRequests');
+		onValue(reqRef, async (snap) => {
+			const val = snap.val() || {};
+			await cleanupOld(val);
+			if (!myLocation || !currentUser) return;
+			const requests = Object.keys(val)
+				.map(k => val[k])
+				.filter(r => r && r.status === 'open' && r.requesterId !== currentUser.uid && typeof r.lat === 'number' && typeof r.lng === 'number')
+				.map(r => ({ ...r, distanceKm: haversineDistance(myLocation.lat, myLocation.lng, r.lat, r.lng) }))
+				.filter(r => r.distanceKm <= 0.5)
+				.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+			if (requests.length) {
+				const r = requests[0];
+				const distLabel = r.distanceKm < 1 ? `${Math.round(r.distanceKm * 1000)}m` : `${r.distanceKm.toFixed(1)}km`;
+				showIncomingToast({ id: r.id, nickname: r.requesterNickname || '旅人', distanceLabel: distLabel, requesterId: r.requesterId, distanceKm: r.distanceKm });
+			} else {
+				$helpToastContainer.empty();
+			}
+		});
+	}
+
+	function reset() {
+		activeId = null;
+		if (circle) { try { map && map.removeLayer(circle); } catch(_){} circle = null; }
+		setButtonState();
+		$helpToastContainer.empty();
+	}
+
+	function initButton() {
+		if ($helpBtn && $helpBtn.length) {
+			$helpBtn.off('click').on('click', toggle);
+			setButtonState();
+		}
+	}
+
+	return { initButton, setButtonState, toggle, subscribe, reset };
+})();
+
+// UIユーティリティ（jQueryでモーダルを生成）
+const Ui = (() => {
+	function confirm(message) {
+		return new Promise((resolve) => {
+			const $overlay = $(`
+				<div class="fixed inset-0 z-[12000] flex items-center justify-center bg-black/40">
+					<div class="bg-white rounded shadow p-4 w-[90%] max-w-xs">
+						<div class="text-sm mb-3">${message}</div>
+						<div class="flex gap-2 justify-end">
+							<button class="px-3 py-1 text-sm border rounded" data-act="cancel">キャンセル</button>
+							<button class="px-3 py-1 text-sm bg-indigo-600 text-white rounded" data-act="ok">OK</button>
+						</div>
+					</div>
+				</div>
+			`);
+			$overlay.on('click', '[data-act="cancel"]', () => { $overlay.remove(); resolve(false); });
+			$overlay.on('click', '[data-act="ok"]', () => { $overlay.remove(); resolve(true); });
+			$('body').append($overlay);
+		});
+	}
+	function alert(message) {
+		return new Promise((resolve) => {
+			const $overlay = $(`
+				<div class="fixed inset-0 z-[12000] flex items-center justify-center bg-black/40">
+					<div class="bg-white rounded shadow p-4 w-[90%] max-w-xs">
+						<div class="text-sm mb-3">${message}</div>
+						<div class="flex gap-2 justify-end">
+							<button class="px-3 py-1 text-sm bg-indigo-600 text-white rounded" data-act="ok">OK</button>
+						</div>
+					</div>
+				</div>
+			`);
+			$overlay.on('click', '[data-act="ok"]', () => { $overlay.remove(); resolve(); });
+			$('body').append($overlay);
+		});
+	}
+	return { confirm, alert };
+})();
+
+// ===== 画面切り替え =====
 function showScreen(name) {
 	$screenSplash.addClass('hidden');
 	$screenHome.addClass('hidden');
@@ -68,6 +240,7 @@ function showScreen(name) {
 	if (name === 'chat') $screenChat.removeClass('hidden');
 }
 
+// ===== ユーティリティ =====
 // Haversine距離計算（km）
 function haversineDistance(lat1, lon1, lat2, lon2) {
 	const toRad = (v) => (v * Math.PI) / 180;
@@ -79,6 +252,7 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 	return R * c;
 }
 
+// ===== Splash: 認証（ログイン/新規） =====
 // 匿名ログイン→ユーザー作成
 async function startWithNickname() {
 	const nickname = $nicknameInput.val().trim();
@@ -124,6 +298,18 @@ async function startWithNickname() {
 	// onAuthStateChanged のコールバックで続き実行
 }
 
+// ニックネーム存在チェック（RTDBの users 全件から走査）
+async function checkNicknameExists(nickRaw) {
+	const norm = String(nickRaw).trim().toLocaleLowerCase();
+	const snap = await get(ref(rtdb, 'users'));
+	if (!snap.exists()) return false;
+	const val = snap.val() || {};
+	return Object.keys(val).some((uid) => {
+		const n = val[uid] && val[uid].nickname ? String(val[uid].nickname) : '';
+		return n.trim().toLocaleLowerCase() === norm;
+	});
+}
+
 // 認証後の共通処理
 async function proceedAfterAuth(user) {
 	const uid = user.uid;
@@ -167,6 +353,7 @@ async function proceedAfterAuth(user) {
 	} catch (e) { console.error('位置情報初期化に失敗:', e); }
 	try { if (!locationsSubscribed) { subscribeLocations(); locationsSubscribed = true; } } catch (e) { console.error('locations購読失敗:', e); }
 	try { subscribeIncomingMessages(); } catch (e) { console.error('incoming購読失敗:', e); }
+	try { HelpManager.subscribe(); } catch (e) { console.error('help購読失敗:', e); }
 }
 // locationsの重複キーをクリーンアップ（同一uidに対する複数エントリを削除）
 async function cleanupDuplicateLocations() {
@@ -193,19 +380,9 @@ onAuthStateChanged(auth, async (user) => {
 	proceedAfterAuth(user);
 });
 
-// ログイン（既存UIDで続行）
-// イベントバインド（まとめて初期化）
-$(document).ready(() => {
-	// ログイン（既存UIDで続行）
-	$loginBtn.on('click', () => { loginMode = true; registerMode = false; startWithNickname(); });
-	// 新規ユーザーで開始（完全ログアウト→新規匿名UID発行）
-	$registerBtn.on('click', async () => {
-		try { await signOut(auth); } catch (e) { console.warn('signOut失敗（続行）:', e); }
-		registerMode = true; loginMode = false; startWithNickname();
-	});
-});
+// ログイン（既存UIDで続行）は末尾の初期化で一括バインド
 
-// 位置情報＆マップ初期化
+// ===== Home: 位置情報＆マップ =====
 async function initLocationAndMap() {
 	return new Promise((resolve) => {
 		if (!navigator.geolocation) {
@@ -269,7 +446,7 @@ async function initLocationAndMap() {
 	});
 }
 
-// locations購読→近くのユーザー表示
+// ===== Home: 近くのユーザー＆リスト =====
 function subscribeLocations() {
 	const locationsRef = ref(rtdb, 'locations');
 	onValue(locationsRef, (snap) => {
@@ -312,6 +489,7 @@ function subscribeLocations() {
 	});
 }
 
+
 // 全ユーザーのlocations重複をクリーンアップ（各uidにつきキーはuidのみを残す）
 async function cleanupAllDuplicateLocations(val) {
 	const byUid = new Map(); // uid -> array of keys
@@ -334,18 +512,6 @@ async function cleanupAllDuplicateLocations(val) {
 	if (ops.length) {
 		await Promise.all(ops);
 	}
-}
-
-// ニックネーム存在チェック（RTDBの users 全件から走査）
-async function checkNicknameExists(nickRaw) {
-	const norm = String(nickRaw).trim().toLocaleLowerCase();
-	const snap = await get(ref(rtdb, 'users'));
-	if (!snap.exists()) return false;
-	const val = snap.val() || {};
-	return Object.keys(val).some((uid) => {
-		const n = val[uid] && val[uid].nickname ? String(val[uid].nickname) : '';
-		return n.trim().toLocaleLowerCase() === norm;
-	});
 }
 
 // ユーザーリスト描画（ニックネーム取得+距離表示）
@@ -392,6 +558,7 @@ async function openUserMiniCard(uid) {
 	startChatWithUser({ uid, nickname, distanceKm: found ? found.distanceKm : null });
 }
 
+// ===== Chat: 開始＆購読 =====
 // チャット開始
 async function startChatWithUser(partner) {
 	const roomId = [currentUser.uid, partner.uid].sort().join('_');
@@ -418,9 +585,7 @@ async function startChatWithUser(partner) {
 	} catch (e) { console.error('lastSeen更新に失敗:', e); }
 }
 
-// メッセージ購読
 function subscribeMessages(roomId) {
-	// RTDBの購読は onValue を使う。解除はリスナーの参照保持が必要だが、ここでは簡略化。
 	const messagesRef = ref(rtdb, `rooms/${roomId}/messages`);
 	const handler = (snap) => {
 		$messagesEl.empty();
@@ -434,13 +599,11 @@ function subscribeMessages(roomId) {
 			});
 			$messagesEl.append($bubble);
 		});
-		$messagesEl.scrollTop($messagesEl[0].scrollHeight);
+		$messagesEl.scrollTop($messagesEl.prop('scrollHeight'));
 	};
 	onValue(messagesRef, handler);
-	// 簡略化のため解除は省略（画面戻り時にmessagesをクリア）
 }
 
-// 背景で自分がメンバーの部屋を監視し、新着が来たら自動で開く（MVP簡易）
 function subscribeIncomingMessages() {
 	const roomsRef = ref(rtdb, 'rooms');
 	onValue(roomsRef, (snap) => {
@@ -449,12 +612,11 @@ function subscribeIncomingMessages() {
 			const room = rooms[roomId];
 			const members = room.memberIds || [];
 			if (!currentUser || !Array.isArray(members)) return;
-			if (!members.includes(currentUser.uid)) return; // 自分が参加している部屋のみ
-			// 既にアクティブならスキップ（未読バッジのみの設計にするため）
+			if (!members.includes(currentUser.uid)) return;
+
 			if (activeRoom && activeRoom.roomId === roomId) return;
 
 			const messagesRef = ref(rtdb, `rooms/${roomId}/messages`);
-			// すでにリスナー設置済みならスキップ
 			if (incomingListeners[roomId]) return;
 			incomingListeners[roomId] = true;
 
@@ -466,7 +628,6 @@ function subscribeIncomingMessages() {
 					renderUserList();
 					return;
 				}
-				// 未読数の算出
 				try {
 					const stateSnap = await get(child(ref(rtdb), `roomStates/${roomId}/${currentUser.uid}`));
 					const lastSeen = stateSnap.exists() ? (stateSnap.val().lastSeen || 0) : 0;
@@ -481,9 +642,20 @@ function subscribeIncomingMessages() {
 	});
 }
 
-// メッセージ送信
+// ===== 初期化（ボタンのイベントを一括バインド） =====
 $(document).ready(() => {
-	$sendMessageBtn.on('click', async () => {
+	// ログインボタン
+	$loginBtn.off('click').on('click', () => {
+		loginMode = true; registerMode = false; startWithNickname();
+	});
+	// 新規開始ボタン
+	$registerBtn.off('click').on('click', async () => {
+		try { await signOut(auth); } catch (e) { console.warn('signOut失敗（続行）:', e); }
+		registerMode = true; loginMode = false; startWithNickname();
+	});
+
+	// 送信ボタン
+	$sendMessageBtn.off('click').on('click', async () => {
 		const text = $chatTextInput.val().trim();
 		if (!text || !activeRoom || !currentUser) return;
 		const messagesRef = ref(rtdb, `rooms/${activeRoom.roomId}/messages`);
@@ -491,28 +663,26 @@ $(document).ready(() => {
 		await set(newRef, { senderId: currentUser.uid, text, createdAt: Date.now() });
 		$chatTextInput.val('');
 	});
-});
 
-
-
-// 戻る
-$(document).ready(() => {
-	$backBtn.on('click', () => {
+	// 戻るボタン
+	$backBtn.off('click').on('click', () => {
 		activeRoom = null;
 		$chatTextInput.val('');
 		showScreen('home');
 	});
-});
 
-// ログアウト
-// ログアウトはセッション維持（匿名UIDを保持）: UIだけ戻す
-$(document).ready(() => {
-	$logoutBtn.on('click', async () => {
+	// ログアウトボタン
+	$logoutBtn.off('click').on('click', async () => {
 		currentUser = null;
 		$myNicknameEl.text('');
 		$messagesEl.empty();
 		$userListEl.empty();
 		showScreen('splash');
+		HelpManager.reset();
 	});
+
+	// Helpボタン
+	HelpManager.initButton();
 });
+
 

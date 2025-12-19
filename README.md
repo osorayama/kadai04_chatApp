@@ -5,6 +5,7 @@ Sottra（近くの日本人旅行者とチャットするアプリ）
 - 位置情報を用いて半径約5km以内のユーザーを地図（Leaflet）とリストで表示
 - 選択した相手と1対1でチャット（Firebase Realtime Database）
 - ニックネーム入力のみで利用可能（Firebase匿名認証）
+ - 右下「Help」ボタンで半径500m以内の旅人へ要請通知（送信中は「Helpをキャンセル」に切替、受信側は「助ける」で即チャット／地図に500m円表示、30分で自動クリーンアップ）Ver2
 
 ## ③アプリのデプロイURL
 - https://osorayama.github.io/kadai04_chatApp/
@@ -24,10 +25,10 @@ Sottra（近くの日本人旅行者とチャットするアプリ）
 - 位置情報とユーザー/チャットルームの関係設計が難しく、RTDB構造と更新ロジックの整合性に苦労した
 - 自分が「近くの旅人」リストに出てしまうケースの除外制御が難しかった（自己除外の徹底が課題）
 - 次回トライ：ユーザー削除機能、表示ユーザー数の制限、距離閾値の可変化
+ 
 
 ## ⑦フリー項目（感想、シェアしたいこと等なんでも）
 - [感想] 卒業制作のMVPとして、位置情報とチャットを連携した体験を端的に試作できました。
 - [参考記事]
 	- Leaflet: https://leafletjs.com/
-	- Firebase Web v9: https://firebase.google.com/docs/web
 	- OpenStreetMap: https://www.openstreetmap.org/
